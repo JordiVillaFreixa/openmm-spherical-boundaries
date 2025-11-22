@@ -83,3 +83,9 @@ trimmed system plus a serialized `OpenMM` `System`. The subsequent call to
 `run_serialized_simulation` deserializes that system, initializes an integrator,
 and runs 5000 steps while recording a DCD trajectory. Adjust `steps`, `traj_path`,
 or `trajectory_format` to suit your workflow.
+
+When building droplets the outer layer of oxygen atoms is turned into an elastic
+network so the droplet maintains its spherical boundary. By default a 0.3 nm
+shell, 0.6 nm cutoff, and 1000 kJ/mol/nm^2 springs are used; tweak these through
+`shell_thickness`, `shell_cutoff`, and `force_constant` (or the analogous CLI
+flags) if you need softer or harder confinement.

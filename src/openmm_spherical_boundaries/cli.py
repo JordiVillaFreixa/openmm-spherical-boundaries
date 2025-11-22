@@ -158,6 +158,24 @@ def _setup_prepare_droplet_parser(subparsers: argparse._SubParsersAction) -> Non
         default=0.3,
         help="Extra padding (nm) added around the requested radius before trimming",
     )
+    parser.add_argument(
+        "--shell-thickness",
+        type=float,
+        default=0.3,
+        help="Thickness (nm) of the boundary shell used for elastic restraints",
+    )
+    parser.add_argument(
+        "--shell-cutoff",
+        type=float,
+        default=0.6,
+        help="Distance cutoff (nm) for boundary elastic bonds",
+    )
+    parser.add_argument(
+        "--force-constant",
+        type=float,
+        default=1000.0,
+        help="Elastic bond force constant in kJ/mol/nm^2",
+    )
 
 
 def _setup_run_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -231,6 +249,9 @@ def _handle_prepare_droplet(args: argparse.Namespace) -> None:
         forcefield_files=args.forcefield,
         solvent_model=args.solvent_model,
         padding=args.padding,
+        shell_thickness=args.shell_thickness,
+        shell_cutoff=args.shell_cutoff,
+        force_constant=args.force_constant,
     )
 
 

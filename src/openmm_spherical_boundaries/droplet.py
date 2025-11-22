@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Sequence
 
-from openmm import Vec3, XmlSerializer, unit
+from openmm import HarmonicBondForce, Vec3, XmlSerializer, unit
 from openmm.app import CutoffNonPeriodic, Element, ForceField, Modeller, PDBFile, Topology
 
 from .utils import clean_openmm_positions, distance
@@ -23,11 +23,22 @@ def prepare_water_droplet(
     forcefield_files: Sequence[str] | None = None,
     solvent_model: str = "spce",
     padding: float = 0.3,
+    shell_thickness: float = 0.3,
+    shell_cutoff: float = 0.6,
+    force_constant=1000.0 * unit.kilojoules_per_mole / unit.nanometer**2,
 ) -> int:
-    """Create a spherical water droplet by solvating a dummy system and trimming."""
+    """Build a spherical water droplet and add elastic boundary restraints."""
 
     if radius <= 0:
         raise ValueError("Radius must be positive.")
+
+    if shell_thickness <= 0:
+        raise ValueError("Shell thickness must be positive.")
+    if shell_cutoff <= 0:
+        raise ValueError("Shell cutoff must be positive.")
+
+    if not isinstance(force_constant, unit.Quantity):
+        force_constant = force_constant * unit.kilojoules_per_mole / unit.nanometer**2
 
     if forcefield_files is None:
         forcefield_files = DEFAULT_FORCEFIELD
@@ -60,6 +71,10 @@ def prepare_water_droplet(
         nonbondedCutoff=1 * unit.nanometer,
         removeCMMotion=True,
     )
+
+    boundary_atoms = _identify_boundary_oxygens(modeller, radius, shell_thickness)
+    LOGGER.info("Boundary shell contains %d oxygen atoms", len(boundary_atoms))
+    _add_boundary_forces(system, boundary_atoms, shell_cutoff, force_constant)
 
     output_pdb_path = Path(output_pdb)
     output_pdb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,3 +133,66 @@ def _trim_to_radius(modeller: Modeller, radius: float) -> int:
         modeller.delete(residues_to_remove)
 
     return modeller.getTopology().getNumResidues()
+
+
+def _identify_boundary_oxygens(
+    modeller: Modeller,
+    radius: float,
+    shell_thickness: float,
+) -> list[tuple[int, list[float]]]:
+    """Return (index, coords) for oxygen atoms within the boundary shell."""
+
+    inner_radius = max(0.0, radius - shell_thickness)
+    pos_array = clean_openmm_positions(modeller.getPositions())
+    boundary: list[tuple[int, list[float]]] = []
+    for atom, coord in zip(modeller.getTopology().atoms(), pos_array):
+        if getattr(atom.element, "symbol", None) != "O":
+            continue
+        dist_to_center = distance(coord, (0.0, 0.0, 0.0))
+        if inner_radius <= dist_to_center <= radius:
+            boundary.append((atom.index, coord))
+    return boundary
+
+
+def _add_boundary_forces(
+    system,
+    boundary_atoms: list[tuple[int, list[float]]],
+    shell_cutoff: float,
+    force_constant,
+) -> None:
+    """Add harmonic bonds between nearby boundary oxygens."""
+
+    if not boundary_atoms:
+        LOGGER.warning("No boundary oxygen atoms were detected; skipping boundary springs")
+        return
+
+    enm_force = HarmonicBondForce()
+    distances = []
+    for i, (idx_i, coord_i) in enumerate(boundary_atoms):
+        for idx_j, coord_j in boundary_atoms[i + 1 :]:
+            d = distance(coord_i, coord_j)
+            if d < shell_cutoff:
+                enm_force.addBond(
+                    idx_i,
+                    idx_j,
+                    d * unit.nanometer,
+                    force_constant,
+                )
+                distances.append(d)
+
+    if not distances:
+        LOGGER.warning(
+            "No elastic boundary bonds met the cutoff of %.2f nm; increase shell thickness or cutoff",
+            shell_cutoff,
+        )
+        return
+
+    mean_d = sum(distances) / len(distances)
+    LOGGER.info(
+        "Added %d boundary springs (mean %.3f nm, min %.3f, max %.3f)",
+        len(distances),
+        mean_d,
+        min(distances),
+        max(distances),
+    )
+    system.addForce(enm_force)
