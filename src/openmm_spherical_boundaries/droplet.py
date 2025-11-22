@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from math import cos, pi, sin
 from pathlib import Path
 from typing import Sequence
 
 from openmm import HarmonicBondForce, Vec3, XmlSerializer, unit
 from openmm.app import CutoffNonPeriodic, Element, ForceField, Modeller, PDBFile, Topology
 
+from .geometry import deduplicate_vertices, icosahedron, subdivide
 from .utils import clean_openmm_positions, distance
 
 LOGGER = logging.getLogger(__name__)
@@ -25,20 +27,43 @@ def prepare_water_droplet(
     padding: float = 0.3,
     shell_thickness: float = 0.3,
     shell_cutoff: float = 0.6,
-    force_constant=1000.0 * unit.kilojoules_per_mole / unit.nanometer**2,
+    force_constant=None,
+    boundary_mode: str = "molten",
+    extra_space: float = 0.15,
+    num_subdivisions: int = 3,
 ) -> int:
-    """Build a spherical water droplet and add elastic boundary restraints."""
+    """Build a spherical water droplet and add elastic boundary restraints.
+
+    boundary_mode:
+        - ``molten``: current behavior, harmonic springs between waters in the outer shell
+        - ``triangular``: single-layer icosahedral net with near-uniform spacing (~0.32 nm)
+    """
 
     if radius <= 0:
         raise ValueError("Radius must be positive.")
 
-    if shell_thickness <= 0:
+    boundary_mode = boundary_mode.lower()
+    if boundary_mode not in {"molten", "triangular"}:
+        raise ValueError("boundary_mode must be 'molten' or 'triangular'")
+
+    if shell_thickness <= 0 and boundary_mode == "molten":
         raise ValueError("Shell thickness must be positive.")
     if shell_cutoff <= 0:
         raise ValueError("Shell cutoff must be positive.")
+    if extra_space < 0:
+        raise ValueError("extra_space must be non-negative.")
+    if num_subdivisions < 0:
+        raise ValueError("num_subdivisions must be non-negative.")
 
-    if not isinstance(force_constant, unit.Quantity):
-        force_constant = force_constant * unit.kilojoules_per_mole / unit.nanometer**2
+    # Default force constant depends on the boundary type (thesis values)
+    if force_constant is None:
+        base_force_constant = 3000.0 if boundary_mode == "triangular" else 1000.0
+    else:
+        base_force_constant = force_constant
+    if not isinstance(base_force_constant, unit.Quantity):
+        base_force_constant = (
+            base_force_constant * unit.kilojoules_per_mole / unit.nanometer**2
+        )
 
     if forcefield_files is None:
         forcefield_files = DEFAULT_FORCEFIELD
@@ -72,9 +97,26 @@ def prepare_water_droplet(
         removeCMMotion=True,
     )
 
-    boundary_atoms = _identify_boundary_oxygens(modeller, radius, shell_thickness)
-    LOGGER.info("Boundary shell contains %d oxygen atoms", len(boundary_atoms))
-    _add_boundary_forces(system, boundary_atoms, shell_cutoff, force_constant)
+    # Use mode-appropriate cutoff (default of 0.6 is best for molten; 0.4 was tested for triangular)
+    effective_cutoff = shell_cutoff
+    if boundary_mode == "triangular" and shell_cutoff == 0.6:
+        effective_cutoff = 0.4
+        LOGGER.info("Triangular boundary detected; using shell_cutoff=0.4 nm to match tested net")
+
+    if boundary_mode == "molten":
+        boundary_atoms = _identify_boundary_oxygens(modeller, radius, shell_thickness)
+        LOGGER.info("Boundary shell contains %d oxygen atoms", len(boundary_atoms))
+        _add_boundary_forces(system, boundary_atoms, effective_cutoff, base_force_constant)
+    else:
+        _add_triangular_boundary(
+            modeller=modeller,
+            system=system,
+            radius=radius,
+            shell_cutoff=effective_cutoff,
+            force_constant=base_force_constant,
+            extra_space=extra_space,
+            num_subdivisions=num_subdivisions,
+        )
 
     output_pdb_path = Path(output_pdb)
     output_pdb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,4 +237,98 @@ def _add_boundary_forces(
         min(distances),
         max(distances),
     )
+    system.addForce(enm_force)
+
+
+def _add_triangular_boundary(
+    modeller: Modeller,
+    system,
+    radius: float,
+    shell_cutoff: float,
+    force_constant,
+    extra_space: float,
+    num_subdivisions: int,
+) -> None:
+    """Add a single-layer icosahedral net of waters and connect neighbors with springs."""
+
+    verts, faces = icosahedron()
+    for _ in range(num_subdivisions):
+        verts, faces = subdivide(verts, faces)
+    verts = deduplicate_vertices(verts)
+
+    shell_radius = radius + extra_space
+    oxygens = [
+        (vert[0] * shell_radius, vert[1] * shell_radius, vert[2] * shell_radius) for vert in verts
+    ]
+    LOGGER.info("Triangular boundary molecules: %d", len(oxygens))
+
+    # Simple orientation of hydrogens on the sphere (as in triangular_model)
+    r = 0.1
+    phi = 0.0
+    hydrogens = []
+    for idx, (x, y, z) in enumerate(oxygens):
+        theta = 2 * pi if idx % 2 else pi
+        x1 = r * sin(theta) * cos(phi)
+        y1 = r * sin(theta) * sin(phi)
+        z1 = r * cos(theta)
+        x2 = r * sin(theta + 1.823) * cos(phi)
+        y2 = r * sin(theta + 1.823) * sin(phi)
+        z2 = r * cos(theta + 1.823)
+        hydrogens.append(((x + x1, y + y1, z + z1), (x + x2, y + y2, z + z2)))
+
+    base_top = modeller.getTopology()
+    offset = base_top.getNumAtoms()
+
+    element_o = Element.getBySymbol("O")
+    element_h = Element.getBySymbol("H")
+
+    topo = Topology()
+    chain = topo.addChain()
+    boundary_positions: list[Vec3] = []
+
+    for idx, (ox, oy, oz) in enumerate(oxygens):
+        residue = topo.addResidue("SOL", chain)
+        atom_o = topo.addAtom("O", element_o, residue)
+        atom_h1 = topo.addAtom("H1", element_h, residue)
+        atom_h2 = topo.addAtom("H2", element_h, residue)
+        topo.addBond(atom_o, atom_h1)
+        topo.addBond(atom_o, atom_h2)
+
+        (h1x, h1y, h1z), (h2x, h2y, h2z) = hydrogens[idx]
+        boundary_positions.extend(
+            [
+                Vec3(ox, oy, oz),
+                Vec3(h1x, h1y, h1z),
+                Vec3(h2x, h2y, h2z),
+            ]
+        )
+
+    modeller.add(topo, boundary_positions)
+
+    enm_force = HarmonicBondForce()
+    distances: list[float] = []
+    for i in range(len(oxygens)):
+        for j in range(i + 1, len(oxygens)):
+            d = distance(oxygens[i], oxygens[j])
+            if d < shell_cutoff:
+                enm_force.addBond(
+                    offset + i * 3,
+                    offset + j * 3,
+                    d * unit.nanometer,
+                    force_constant,
+                )
+                distances.append(d)
+
+    if distances:
+        mean_d = sum(distances) / len(distances)
+        LOGGER.info(
+            "Added %d triangular boundary springs (mean %.3f nm, min %.3f, max %.3f)",
+            len(distances),
+            mean_d,
+            min(distances),
+            max(distances),
+        )
+    else:
+        LOGGER.warning("No triangular boundary springs added; check cutoff or subdivisions")
+
     system.addForce(enm_force)

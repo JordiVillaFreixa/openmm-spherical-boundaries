@@ -173,8 +173,26 @@ def _setup_prepare_droplet_parser(subparsers: argparse._SubParsersAction) -> Non
     parser.add_argument(
         "--force-constant",
         type=float,
-        default=1000.0,
-        help="Elastic bond force constant in kJ/mol/nm^2",
+        default=None,
+        help="Elastic bond force constant in kJ/mol/nm^2 (defaults depend on mode)",
+    )
+    parser.add_argument(
+        "--boundary-mode",
+        choices=["molten", "triangular"],
+        default="molten",
+        help="Elastic boundary construction to use",
+    )
+    parser.add_argument(
+        "--extra-space",
+        type=float,
+        default=0.15,
+        help="Additional radial spacing (nm) for triangular boundary placement",
+    )
+    parser.add_argument(
+        "--num-subdivisions",
+        type=int,
+        default=3,
+        help="Icosahedron subdivision count for triangular boundary",
     )
 
 
@@ -252,6 +270,9 @@ def _handle_prepare_droplet(args: argparse.Namespace) -> None:
         shell_thickness=args.shell_thickness,
         shell_cutoff=args.shell_cutoff,
         force_constant=args.force_constant,
+        boundary_mode=args.boundary_mode,
+        extra_space=args.extra_space,
+        num_subdivisions=args.num_subdivisions,
     )
 
 
