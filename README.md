@@ -36,6 +36,45 @@ The droplet generator currently supports the original AMBER99SB + SPC/E force
 field pairing; passing other force-field XML files will raise a clear error until
 they can be validated.
 
+### Standalone droplet runner (scripts/run_droplet.py)
+
+If you want a single scriptable droplet run (with warmup/minimization support)
+without the CLI, use `scripts/run_droplet.py`:
+
+```bash
+python scripts/run_droplet.py --radius 3.0 --equil-ns 1 --prod-ns 5 \
+  --warmup-start-k 10 --warmup-duration-ns 0.1 --minimize \
+  --equil-traj equil.dcd --prod-traj prod.dcd \
+  --equil-log equil.log --prod-log prod.log \
+  --warmup-traj warmup.dcd --warmup-log warmup.log
+```
+
+Key features: Langevin (300 K, 1 ps^-1, 1 fs), optional energy minimization,
+separate warmup phase (default 10 K for 0.1 ns to target temp), split trajectory
+and energy reporters for warmup/equil/prod, and DCD-only trajectories.
+
+### Preparing multiple jobs (setup_simulations)
+
+Use `openmm_spherical_boundaries.setup_simulations.setup_droplet_jobs` to emit
+ready-to-run commands and per-job folders:
+
+```python
+from openmm_spherical_boundaries.setup_simulations import setup_droplet_jobs
+
+commands = setup_droplet_jobs(
+    simulation_folder="runs",
+    variants=[{"radius": r} for r in (2.0, 2.5, 3.0)],
+    base_params={"equil_ns": 1.0, "prod_ns": 5.0},
+)
+for cmd in commands:
+    print(cmd)
+```
+
+Behavior: creates a `script/run_droplet.py` copy under `simulation_folder`,
+creates one subfolder per variant (named from parameters), writes `params.json`,
+and returns shell commands that run in a subshell so your CWD is restored.
+Existing folders are reused when `overwrite=True` (default) rather than deleted.
+
 ## Python API
 
 ```python

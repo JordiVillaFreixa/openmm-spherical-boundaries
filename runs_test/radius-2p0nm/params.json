@@ -1,0 +1,8 @@
+{
+  "params": {
+    "equil_ns": 0.1,
+    "prod_ns": 0.2,
+    "radius": 2.0
+  },
+  "command": "(cd runs_test/radius-2p0nm && python ../script/run_droplet.py --equil-ns 0.1 --prod-ns 0.2 --radius 2.0 --output-pdb droplet.pdb --system-xml droplet.xml --equil-traj equil.dcd --prod-traj prod.dcd --equil-log equil.log --prod-log prod.log --state-xml state.xml)\n"
+}
