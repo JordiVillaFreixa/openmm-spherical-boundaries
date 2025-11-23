@@ -28,7 +28,7 @@ def prepare_water_droplet(
     shell_thickness: float = 0.3,
     shell_cutoff: float = 0.6,
     force_constant=None,
-    boundary_mode: str = "molten",
+    boundary_mode: str = "triangular",
     extra_space: float = 0.15,
     num_subdivisions: int = 3,
 ) -> int:
@@ -90,13 +90,6 @@ def prepare_water_droplet(
     trimmed_count = _trim_to_radius(modeller, radius)
     LOGGER.info("Trimmed droplet contains %d water molecules", trimmed_count)
 
-    system = forcefield.createSystem(
-        modeller.getTopology(),
-        nonbondedMethod=CutoffNonPeriodic,
-        nonbondedCutoff=1 * unit.nanometer,
-        removeCMMotion=True,
-    )
-
     # Use mode-appropriate cutoff (default of 0.6 is best for molten; 0.4 was tested for triangular)
     effective_cutoff = shell_cutoff
     if boundary_mode == "triangular" and shell_cutoff == 0.6:
@@ -106,17 +99,31 @@ def prepare_water_droplet(
     if boundary_mode == "molten":
         boundary_atoms = _identify_boundary_oxygens(modeller, radius, shell_thickness)
         LOGGER.info("Boundary shell contains %d oxygen atoms", len(boundary_atoms))
+        system = forcefield.createSystem(
+            modeller.getTopology(),
+            nonbondedMethod=CutoffNonPeriodic,
+            nonbondedCutoff=1 * unit.nanometer,
+            removeCMMotion=True,
+        )
         _add_boundary_forces(system, boundary_atoms, effective_cutoff, base_force_constant)
     else:
-        _add_triangular_boundary(
+        offset = modeller.getTopology().getNumAtoms()
+        enm_force = _add_triangular_boundary(
             modeller=modeller,
-            system=system,
             radius=radius,
             shell_cutoff=effective_cutoff,
             force_constant=base_force_constant,
             extra_space=extra_space,
             num_subdivisions=num_subdivisions,
+            starting_index=offset,
         )
+        system = forcefield.createSystem(
+            modeller.getTopology(),
+            nonbondedMethod=CutoffNonPeriodic,
+            nonbondedCutoff=1 * unit.nanometer,
+            removeCMMotion=True,
+        )
+        system.addForce(enm_force)
 
     output_pdb_path = Path(output_pdb)
     output_pdb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -242,14 +249,14 @@ def _add_boundary_forces(
 
 def _add_triangular_boundary(
     modeller: Modeller,
-    system,
     radius: float,
     shell_cutoff: float,
     force_constant,
     extra_space: float,
     num_subdivisions: int,
-) -> None:
-    """Add a single-layer icosahedral net of waters and connect neighbors with springs."""
+    starting_index: int,
+) -> HarmonicBondForce:
+    """Add a single-layer icosahedral net of waters and return the boundary force."""
 
     verts, faces = icosahedron()
     for _ in range(num_subdivisions):
@@ -276,9 +283,6 @@ def _add_triangular_boundary(
         z2 = r * cos(theta + 1.823)
         hydrogens.append(((x + x1, y + y1, z + z1), (x + x2, y + y2, z + z2)))
 
-    base_top = modeller.getTopology()
-    offset = base_top.getNumAtoms()
-
     element_o = Element.getBySymbol("O")
     element_h = Element.getBySymbol("H")
 
@@ -303,7 +307,7 @@ def _add_triangular_boundary(
             ]
         )
 
-    modeller.add(topo, boundary_positions)
+    modeller.add(topo, unit.Quantity(boundary_positions, unit.nanometer))
 
     enm_force = HarmonicBondForce()
     distances: list[float] = []
@@ -312,8 +316,8 @@ def _add_triangular_boundary(
             d = distance(oxygens[i], oxygens[j])
             if d < shell_cutoff:
                 enm_force.addBond(
-                    offset + i * 3,
-                    offset + j * 3,
+                    starting_index + i * 3,
+                    starting_index + j * 3,
                     d * unit.nanometer,
                     force_constant,
                 )
@@ -331,4 +335,4 @@ def _add_triangular_boundary(
     else:
         LOGGER.warning("No triangular boundary springs added; check cutoff or subdivisions")
 
-    system.addForce(enm_force)
+    return enm_force

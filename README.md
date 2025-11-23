@@ -124,7 +124,9 @@ and runs 5000 steps while recording a DCD trajectory. Adjust `steps`, `traj_path
 or `trajectory_format` to suit your workflow.
 
 When building droplets the outer layer of oxygen atoms is turned into an elastic
-network so the droplet maintains its spherical boundary. By default a 0.3 nm
-shell, 0.6 nm cutoff, and 1000 kJ/mol/nm^2 springs are used; tweak these through
-`shell_thickness`, `shell_cutoff`, and `force_constant` (or the analogous CLI
-flags) if you need softer or harder confinement.
+network so the droplet maintains its spherical boundary. By default the thesis
+triangular net is used (single-layer icosahedral lattice, ~0.32 nm spacing,
+0.4 nm cutoff, 3000 kJ/mol/nm^2 springs, extra space 0.15 nm). Switch to the
+legacy molten shell with `--boundary-mode molten` (or the API argument) and
+tune `shell_thickness`, `shell_cutoff`, and `force_constant` if you need softer
+or harder confinement.

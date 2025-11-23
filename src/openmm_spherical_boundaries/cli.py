@@ -179,8 +179,8 @@ def _setup_prepare_droplet_parser(subparsers: argparse._SubParsersAction) -> Non
     parser.add_argument(
         "--boundary-mode",
         choices=["molten", "triangular"],
-        default="molten",
-        help="Elastic boundary construction to use",
+        default="triangular",
+        help="Elastic boundary construction to use (default: triangular net from thesis)",
     )
     parser.add_argument(
         "--extra-space",

@@ -75,8 +75,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--force-constant",
         type=float,
-        default=1000.0,
-        help="Elastic bond force constant in kJ/mol/nm^2",
+        default=None,
+        help="Elastic bond force constant in kJ/mol/nm^2 (defaults: molten=1000, triangular=3000)",
+    )
+    parser.add_argument(
+        "--boundary-mode",
+        choices=["molten", "triangular"],
+        default="triangular",
+        help="Elastic boundary construction to use (default: triangular net from thesis)",
+    )
+    parser.add_argument(
+        "--extra-space",
+        type=float,
+        default=0.15,
+        help="Additional radial spacing (nm) for triangular boundary placement",
+    )
+    parser.add_argument(
+        "--num-subdivisions",
+        type=int,
+        default=3,
+        help="Icosahedron subdivision count for triangular boundary",
     )
 
     parser.add_argument(
@@ -403,6 +421,9 @@ def main(argv: list[str] | None = None) -> None:
         shell_thickness=args.shell_thickness,
         shell_cutoff=args.shell_cutoff,
         force_constant=args.force_constant,
+        boundary_mode=args.boundary_mode,
+        extra_space=args.extra_space,
+        num_subdivisions=args.num_subdivisions,
     )
 
     equil_steps = ns_to_steps(args.equil_ns, args.timestep_fs)
