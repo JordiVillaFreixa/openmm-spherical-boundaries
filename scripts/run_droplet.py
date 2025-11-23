@@ -37,6 +37,7 @@ DEFAULT_FRICTION_PS = 1.0
 DEFAULT_TIMESTEP_FS = 1.0
 DEFAULT_EQUIL_NS = 1.0
 DEFAULT_PROD_NS = 5.0
+DEFAULT_LOG_SIGFIGS = 6
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -132,6 +133,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--equil-log", default="equil.log", help="Equilibration energy log output")
     parser.add_argument("--prod-log", default="prod.log", help="Production energy log output")
     parser.add_argument("--state-xml", default="state.xml", help="Final state XML output")
+    parser.add_argument(
+        "--log-sigfigs",
+        type=int,
+        default=DEFAULT_LOG_SIGFIGS,
+        help="Significant figures for StateDataReporter outputs (0 to keep OpenMM defaults)",
+    )
     parser.add_argument(
         "--minimize",
         action="store_true",
@@ -233,6 +240,30 @@ def ps_to_steps(interval_ps: float, timestep_fs: float) -> int:
     return steps
 
 
+class SigfigStateDataReporter(StateDataReporter):
+    """StateDataReporter that formats floats with a fixed number of significant figures."""
+
+    def __init__(self, *args, significant_figures: int | None, **kwargs) -> None:
+        if significant_figures is not None and significant_figures <= 0:
+            raise ValueError("significant_figures must be positive or None")
+        self._sigfigs = significant_figures
+        super().__init__(*args, **kwargs)
+
+    def _format_value(self, value):
+        if self._sigfigs is None or not isinstance(value, float):
+            return value
+        try:
+            return f"{value:.{self._sigfigs}g}"
+        except (OverflowError, ValueError):
+            return value
+
+    def _constructReportValues(self, simulation, state):
+        values = super()._constructReportValues(simulation, state)
+        if self._sigfigs is None:
+            return values
+        return [self._format_value(v) for v in values]
+
+
 def build_simulation(
     pdb_path: Path,
     system_xml: Path,
@@ -280,6 +311,7 @@ def run_phase(
     log_stdout: bool,
     phase_name: str,
     warmup: tuple[float, float, int] | None = None,
+    log_sigfigs: int | None = DEFAULT_LOG_SIGFIGS,
 ) -> None:
     """Run a single phase (equil or prod) with separate traj/energy reporters."""
     traj_path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +319,7 @@ def run_phase(
     simulation.reporters = []
     simulation.reporters.append(DCDReporter(str(traj_path), traj_interval_steps))
     simulation.reporters.append(
-        StateDataReporter(
+        SigfigStateDataReporter(
             file=str(log_path),
             reportInterval=energy_interval_steps,
             step=True,
@@ -297,11 +329,12 @@ def run_phase(
             totalEnergy=True,
             temperature=True,
             speed=True,
+            significant_figures=log_sigfigs,
         )
     )
     if log_stdout:
         simulation.reporters.append(
-            StateDataReporter(
+            SigfigStateDataReporter(
                 file=sys.stdout,
                 reportInterval=energy_interval_steps,
                 step=True,
@@ -311,6 +344,7 @@ def run_phase(
                 totalEnergy=True,
                 temperature=True,
                 speed=True,
+                significant_figures=log_sigfigs,
             )
         )
 
@@ -359,6 +393,7 @@ def summarize_parameters(
     traj_steps: int,
     energy_steps: int,
     warmup_steps: int | None,
+    log_sigfigs: int | None,
 ) -> None:
     """Log the resolved simulation parameters and outputs."""
     LOGGER.info(
@@ -403,6 +438,10 @@ def summarize_parameters(
             args.warmup_traj,
             args.warmup_log,
         )
+    LOGGER.info(
+        "StateDataReporter precision: %s",
+        f"{log_sigfigs} significant figures" if log_sigfigs else "OpenMM default formatting",
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -434,7 +473,19 @@ def main(argv: list[str] | None = None) -> None:
     warmup_ns = args.warmup_duration_ns if args.warmup_start_k is not None else 0.0
     if args.warmup_start_k is not None:
         warmup_steps = min(equil_steps, ns_to_steps(warmup_ns, args.timestep_fs))
-    summarize_parameters(args, seed, equil_steps, prod_steps, traj_steps, energy_steps, warmup_steps)
+    if args.log_sigfigs is not None and args.log_sigfigs < 0:
+        raise ValueError("log-sigfigs must be non-negative")
+    log_sigfigs = args.log_sigfigs or None
+    summarize_parameters(
+        args,
+        seed,
+        equil_steps,
+        prod_steps,
+        traj_steps,
+        energy_steps,
+        warmup_steps,
+        log_sigfigs,
+    )
 
     if args.dry_run:
         LOGGER.info("Dry-run complete; skipping dynamics.")
@@ -467,6 +518,7 @@ def main(argv: list[str] | None = None) -> None:
             log_stdout=not args.no_stdout,
             phase_name="warmup",
             warmup=(args.warmup_start_k, args.temperature, warmup_steps),
+            log_sigfigs=log_sigfigs,
         )
 
     run_phase(
@@ -478,6 +530,7 @@ def main(argv: list[str] | None = None) -> None:
         log_path=Path(args.equil_log),
         log_stdout=not args.no_stdout,
         phase_name="equilibration",
+        log_sigfigs=log_sigfigs,
     )
     run_phase(
         simulation=simulation,
@@ -488,6 +541,7 @@ def main(argv: list[str] | None = None) -> None:
         log_path=Path(args.prod_log),
         log_stdout=not args.no_stdout,
         phase_name="production",
+        log_sigfigs=log_sigfigs,
     )
     write_final_state(simulation, Path(args.state_xml))
 
