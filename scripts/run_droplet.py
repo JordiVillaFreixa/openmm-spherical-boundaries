@@ -16,6 +16,7 @@ import argparse
 import logging
 import random
 import sys
+import time
 from pathlib import Path
 
 from openmm import LangevinIntegrator, Platform, XmlSerializer, unit
@@ -25,7 +26,7 @@ try:  # Allow running from a source checkout without installation
     from openmm_spherical_boundaries.droplet import prepare_water_droplet
 except ImportError:  # pragma: no cover - fallback for editable runs
     repo_root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(repo_root / "src"))
+    sys.path.insert(0, str(repo_root))
     from openmm_spherical_boundaries.droplet import prepare_water_droplet
 
 LOGGER = logging.getLogger("run_droplet")
@@ -310,6 +311,7 @@ def run_phase(
     log_path: Path,
     log_stdout: bool,
     phase_name: str,
+    timestep_fs: float,
     warmup: tuple[float, float, int] | None = None,
     log_sigfigs: int | None = DEFAULT_LOG_SIGFIGS,
 ) -> None:
@@ -348,13 +350,16 @@ def run_phase(
             )
         )
 
+    simulated_ns = steps * (timestep_fs * 1e-6)
     LOGGER.info(
-        "Starting %s phase for %d steps (traj every %d steps, energy every %d steps)",
+        "Starting %s phase (~%.3f ns simulated) for %d steps (traj every %d, energy every %d steps)",
         phase_name,
+        simulated_ns,
         steps,
         traj_interval_steps,
         energy_interval_steps,
     )
+    wall_start = time.perf_counter()
     if warmup:
         start_k, end_k, warmup_steps = warmup
         done = 0
@@ -373,7 +378,19 @@ def run_phase(
             simulation.integrator.setTemperature(end_k * unit.kelvin)
     else:
         simulation.step(steps)
-    LOGGER.info("%s phase complete", phase_name.capitalize())
+    elapsed = time.perf_counter() - wall_start
+    LOGGER.info(
+        "%s phase complete in %.2f s of wall time (%.3f ns simulated)",
+        phase_name.capitalize(),
+        elapsed,
+        simulated_ns,
+    )
+
+
+def reset_simulation_timeline(simulation: Simulation) -> None:
+    """Reset the simulation's internal time and step counters."""
+    simulation.context.setTime(0 * unit.picoseconds)
+    simulation.currentStep = 0
 
 
 def write_final_state(simulation: Simulation, path: Path) -> None:
@@ -508,6 +525,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Optional warmup before equilibration
     if warmup_steps:
+        reset_simulation_timeline(simulation)
         run_phase(
             simulation=simulation,
             steps=warmup_steps,
@@ -517,10 +535,12 @@ def main(argv: list[str] | None = None) -> None:
             log_path=Path(args.warmup_log),
             log_stdout=not args.no_stdout,
             phase_name="warmup",
+            timestep_fs=args.timestep_fs,
             warmup=(args.warmup_start_k, args.temperature, warmup_steps),
             log_sigfigs=log_sigfigs,
         )
 
+    reset_simulation_timeline(simulation)
     run_phase(
         simulation=simulation,
         steps=equil_steps,
@@ -530,8 +550,10 @@ def main(argv: list[str] | None = None) -> None:
         log_path=Path(args.equil_log),
         log_stdout=not args.no_stdout,
         phase_name="equilibration",
+        timestep_fs=args.timestep_fs,
         log_sigfigs=log_sigfigs,
     )
+    reset_simulation_timeline(simulation)
     run_phase(
         simulation=simulation,
         steps=prod_steps,
@@ -541,6 +563,7 @@ def main(argv: list[str] | None = None) -> None:
         log_path=Path(args.prod_log),
         log_stdout=not args.no_stdout,
         phase_name="production",
+        timestep_fs=args.timestep_fs,
         log_sigfigs=log_sigfigs,
     )
     write_final_state(simulation, Path(args.state_xml))

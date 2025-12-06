@@ -25,7 +25,7 @@ try:  # Allow running from a source checkout without installation
     from openmm_spherical_boundaries.droplet import prepare_water_droplet
 except ImportError:  # pragma: no cover - fallback for editable runs
     repo_root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(repo_root / "src"))
+    sys.path.insert(0, str(repo_root))
     from openmm_spherical_boundaries.droplet import prepare_water_droplet
 
 LOGGER = logging.getLogger("run_droplet")

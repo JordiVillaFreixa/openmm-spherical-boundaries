@@ -61,7 +61,8 @@ def setup_droplet_jobs(
 
     script_dir = root / "script"
     script_dir.mkdir(parents=True, exist_ok=True)
-    source_script = Path(__file__).resolve().parents[2] / "scripts" / "run_droplet.py"
+    repo_root = Path(__file__).resolve().parents[1]
+    source_script = repo_root / "scripts" / "run_droplet.py"
     dest_script = script_dir / "run_droplet.py"
     shutil.copy2(source_script, dest_script)
 
