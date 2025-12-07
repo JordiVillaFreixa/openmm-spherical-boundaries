@@ -36,6 +36,10 @@ class DropletValidationMetrics:
     production runs) and additional replica trajectories that share the same parameters.
     Each metric method currently raises NotImplementedError, but their docstrings explain
     the calculations we will add once the MDTraj-based I/O utilities are wired in.
+
+    Example:
+        >>> metrics = DropletValidationMetrics()
+        >>> metrics.register_directory(\"runs_test\")  # auto-discovers variant/replica folders
     """
 
     def __init__(self) -> None:
@@ -81,6 +85,27 @@ class DropletValidationMetrics:
             metadata=dict(metadata or {}),
         )
         self.replica_groups.setdefault(group_label, {})[replica_label] = dataset
+
+    def register_directory(
+        self,
+        root: str | Path,
+        *,
+        include_variants: Iterable[str] | None = None,
+    ) -> None:
+        """Bulk-register simulations discovered under a setup_droplet_jobs directory."""
+
+        from .discovery import discover_simulations
+
+        layout = discover_simulations(root, include_variants=include_variants)
+        for variant, replicas in layout.items():
+            for replica_label, dataset in replicas.items():
+                label = f"{variant}/{replica_label}"
+                self.add_simulation(
+                    label=label,
+                    topology_path=dataset.topology_path,
+                    trajectory_paths=dataset.trajectory_paths,
+                    metadata=dataset.metadata,
+                )
 
     # -------------------------------------------------------------------------
     # Loading utilities
