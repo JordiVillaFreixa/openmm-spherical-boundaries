@@ -50,6 +50,10 @@ def discover_simulations(
 
             topology_path = replica_dir / EXPECTED_OUTPUTS["topology"]
             trajectory_paths = [replica_dir / name for name in EXPECTED_OUTPUTS["trajectories"]]
+            missing_outputs = [path for path in [topology_path, *trajectory_paths] if not path.exists()]
+            if missing_outputs:
+                # Skip replicas that have not produced the expected files yet.
+                continue
 
             dataset = SimulationDataset(
                 label=f"{variant_dir.name}/{metadata['replica_label']}",

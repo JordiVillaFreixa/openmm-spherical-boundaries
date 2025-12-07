@@ -43,7 +43,7 @@ def setup_droplet_jobs(
     simulation_folder: str | Path,
     variants: Sequence[Mapping[str, Any]],
     base_params: Mapping[str, Any] | None = None,
-    overwrite: bool = True,
+    overwrite: bool = False,
 ) -> list[str]:
     """Prepare per-variant folders and commands for droplet runs.
 
@@ -51,7 +51,8 @@ def setup_droplet_jobs(
         simulation_folder: Root directory containing all variant subfolders.
         variants: Sequence of mappings with the varying parameters for each job.
         base_params: Common parameters applied to every job (overridden by variants).
-        overwrite: If True, existing job folders are deleted and recreated (default: True).
+        overwrite: If True, existing job folders are deleted and recreated; if False,
+            existing folders are reused and outputs may be overwritten in place.
 
     Returns:
         List of shell command strings (one per job), ready to run.

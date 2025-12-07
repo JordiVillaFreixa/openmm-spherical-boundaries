@@ -43,7 +43,7 @@ def setup_droplet_jobs(
     simulation_folder: str | Path,
     variants: Sequence[Mapping[str, Any]],
     base_params: Mapping[str, Any] | None = None,
-    overwrite: bool = True,
+    overwrite: bool = False,
     *,
     replicas: int = 1,
 ) -> list[str]:
@@ -53,7 +53,8 @@ def setup_droplet_jobs(
         simulation_folder: Root directory containing all variant subfolders.
         variants: Sequence of mappings with the varying parameters for each job.
         base_params: Common parameters applied to every job (overridden by variants).
-        overwrite: If True, existing job folders are deleted and recreated (default: True).
+        overwrite: If True, existing job folders are deleted and recreated; if False,
+            existing folders are reused and outputs may be overwritten in place.
         replicas: Number of replicas to create per parameter set (default: 1).
 
     Returns:
@@ -86,7 +87,7 @@ def setup_droplet_jobs(
                 LOGGER.info("Clearing existing job folder %s", job_path)
                 shutil.rmtree(job_path)
             else:
-                raise FileExistsError(f"Job folder already exists and overwrite=False: {job_path}")
+                LOGGER.info("Reusing existing job folder %s (overwrite disabled)", job_path)
         job_path.mkdir(parents=True, exist_ok=True)
 
         commands.extend(
